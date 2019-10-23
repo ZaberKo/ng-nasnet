@@ -69,9 +69,14 @@ class NASNetCIFAR(nn.Module):
         out_channels2,_=get_stack_out_channels(self.normal_layer2)
         self.gap_layer = nn.AdaptiveAvgPool2d(1)
 
+        # self.softmax_layer = nn.Sequential(OrderedDict([
+        #         ('fc1',nn.Linear(in_features=out_channels2, out_features=100)),
+        #         ('fc2',nn.Linear(in_features=100, out_features=num_classes))
+        #     ]))
+
         self.softmax_layer = nn.Sequential(OrderedDict([
-                ('fc1',nn.Linear(in_features=out_channels2, out_features=100)),
-                ('fc2',nn.Linear(in_features=100, out_features=num_classes))
+                ('dropout',nn.Dropout(0.2)),
+                ('fc1',nn.Linear(in_features=out_channels2, out_features=num_classes))
             ]))
     
 

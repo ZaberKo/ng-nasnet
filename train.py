@@ -74,18 +74,24 @@ def evaluate(model: torch.nn.Module, testloader,device):
 
 
 def load_dataset(path: str,batch_size:int):
-    transform = transforms.Compose([
+    mean = [0.49139968, 0.48215827, 0.44653124]
+    std = [0.24703233, 0.24348505, 0.26158768]
+    transf=[
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip()
+    ]
+    normalize =[
         transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])
+        transforms.Normalize(mean, std)
+    ]
 
     trainset = datasets.CIFAR10(root=path, train=True,
-                                download=True, transform=transform)
+                                download=True, transform=transforms.Compose(transf+normalize))
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
                                               shuffle=True, num_workers=2)
 
     testset = datasets.CIFAR10(root=path, train=False,
-                               download=True, transform=transform)
+                               download=True, transform=transforms.Compose(normalize))
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                              shuffle=False, num_workers=2)
 
