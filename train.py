@@ -15,11 +15,15 @@ from nasnet import NASNetCIFAR
 import argparse
 import json
 
+from apex import amp
 
-def train(model, trainloader, testloader, device):
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_config['lr'])
+def train(model, trainloader, testloader,optimizer, device):
+
+    
     loss_func = torch.nn.CrossEntropyLoss()
+
+    
 
     running_loss = 0.0
     total_step = 0
@@ -33,7 +37,11 @@ def train(model, trainloader, testloader, device):
             output = model(images)
             loss = loss_func(output, labels)
             optimizer.zero_grad()
-            loss.backward()
+            if train_config['fp16']:
+                with amp.scale_loss(loss,optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
             optimizer.step()
 
             running_loss += loss.item()
@@ -127,6 +135,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_gpu = torch.cuda.device_count()
 
+    
+
     model = NASNetCIFAR(
         cell_config_list,
         nasnet_config['num_stem_channels'],
@@ -135,15 +145,18 @@ def main():
         image_size=32,
         num_classes=10
     )
-    if train_config['fp16']:
-        raise ValueError('not implement yet')
-        model.half()
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=train_config['lr'])
 
     model.to(device)
+    if train_config['fp16']:
+        model,optimizer=amp.initialize(model,optimizer,opt_level='O1')
+
+   
     if n_gpu > 1:
         model = nn.DataParallel(model)
 
-    train(model, trainloader, testloader, device)
+    train(model, trainloader, testloader,optimizer, device)
 
     # evaluate(model, testloader)
 

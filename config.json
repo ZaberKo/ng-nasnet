@@ -1,7 +1,7 @@
 {
     "train_config":{
-        "seed":42,
-        "fp16":false,
+        "seed":114514,
+        "fp16":true,
         "data_path":"./dataset",
         "lr":0.001,
         "dropout_rate":0.2,
