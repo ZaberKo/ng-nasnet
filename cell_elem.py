@@ -3,7 +3,7 @@ import torch.nn as nn
 '''
     these convs are designed to not change the size of image
 '''
-
+from droppath import ScheduleDropPath_
 
 def calc_padding_ori(input_size,output_size,kernel_size,stride):
     return (stride*(output_size-1)+kernel_size-input_size)//2
@@ -19,6 +19,7 @@ class BasicConv2d(nn.Sequential):
     def __init__(self,in_channels:int,out_channels:int,size:int,kernel_size:int,stride:int=1):
         super(BasicConv2d,self).__init__()
         self.relu = nn.ReLU()
+        # self.relu = nn.ReLU6()
         self.conv=nn.Conv2d(in_channels,
                             out_channels,
                             kernel_size=kernel_size,
@@ -50,9 +51,11 @@ class SeparableConv2d(nn.Sequential):
             padding=calc_padding(size,kernel_size,stride)
 
         self.relu = nn.ReLU()
+        # self.relu = nn.ReLU6()
         self.separable_1 = _SeparableConv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias)
         self.bn_sep_1 = nn.BatchNorm2d(out_channels, eps=0.001, momentum=0.1, affine=True)
         self.relu1 = nn.ReLU()
+        # self.relu1 = nn.ReLU6()
         self.separable_2 = _SeparableConv2d(out_channels, out_channels, kernel_size, 1, padding, bias=bias)
         self.bn_sep_2 = nn.BatchNorm2d(out_channels, eps=0.001, momentum=0.1, affine=True)
 
@@ -61,6 +64,7 @@ class DilatedConv2d(nn.Sequential):
     def __init__(self,in_channels:int,out_channels:int,size:int,kernel_size:int,stride:int=1,dilation:int=2):
         super(DilatedConv2d,self).__init__()
         self.relu = nn.ReLU()
+        # self.relu = nn.ReLU6()
         real_kernel_size=dilation*(kernel_size-1)+1
         self.conv=nn.Conv2d(in_channels,
                             out_channels,
@@ -77,6 +81,7 @@ class BasicPolling2d(nn.Sequential):
         super(BasicPolling2d,self).__init__()
         # self.remap = BasicConv2d(in_channels, out_channels, kernel_size=1)
         self.relu = nn.ReLU()
+        # self.relu = nn.ReLU6()
         padding=(kernel_size-1)//2 # =calc_padding(size,kernel_size,1)
         if(type=='max'):
             self.pooling=nn.MaxPool2d(kernel_size=kernel_size,stride=1, padding=padding)
@@ -84,3 +89,11 @@ class BasicPolling2d(nn.Sequential):
             self.pooling=nn.AvgPool2d(kernel_size=kernel_size,stride=1, padding=padding)
 
         self.bn=nn.BatchNorm2d(in_channels, eps=0.001, momentum=0.1, affine=True)
+
+
+
+class ScheduleDropPathWarp(nn.Sequential):
+    def __init__(self,op,scheduler):
+        super().__init__()
+        self.op=op
+        self.scheduler=scheduler

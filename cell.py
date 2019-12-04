@@ -4,6 +4,8 @@ from cell_elem import *
 from utils import *
 
 
+
+
 class CellStem0(nn.Sequential):
     def __init__(self, in_channels, out_channels):
         super(CellStem0, self).__init__()
@@ -14,29 +16,30 @@ class CellStem0(nn.Sequential):
 
 
 class FirstCellStack(nn.Module):
-    def __init__(self, config: dict, image_size: int, num_normal_cells: int,  in_channels: int, conv_channels: int):
+    def __init__(self, config: dict, image_size: int, num_stack_cells: int,  in_channels: int, conv_channels: int,scheduled_droppath):
         super(FirstCellStack, self).__init__()
-        if num_normal_cells < 2:
+        if num_stack_cells < 2:
             raise ValueError('cell_stem normal cell number should >=2')
-        self.num_normal_cells = num_normal_cells
+        self.num_stack_cells = num_stack_cells
         self.image_size = image_size
         self.in_channels = in_channels
         self.conv_channels = conv_channels
+        self.scheduled_droppath=scheduled_droppath
 
         self.cells = self._build_cells(config)
-        self.out_channels = get_stack_out_channels(self)
 
     def _build_cells(self, config):
         normal_cells = nn.ModuleList()
         _channels = self.in_channels
         _prev_channels = self.in_channels
 
-        for i in range(self.num_normal_cells):
+        for i in range(self.num_stack_cells):
             cell = NormalCell(config,
                               size=self.image_size,
                               in_channels=_channels,
                               in_prev_channels=_prev_channels,
-                              conv_channels=self.conv_channels)
+                              conv_channels=self.conv_channels,
+                              scheduled_droppath=self.scheduled_droppath)
 
             _prev_channels = _channels
             _channels = cell.out_channels
@@ -47,7 +50,7 @@ class FirstCellStack(nn.Module):
     def forward(self, x):
         # TODO: to check whether direct assignment is fine.
         x_prev = x
-        for i in range(self.num_normal_cells):
+        for i in range(self.num_stack_cells):
             x_new = self.cells[i](x, x_prev)
             x_prev = x
             x = x_new
@@ -56,16 +59,16 @@ class FirstCellStack(nn.Module):
 
 
 class NormalCellStack(nn.Module):
-    def __init__(self, config: dict,  image_size: int, num_normal_cells: int, in_channels: int, in_prev_channels: int, conv_channels: int):
+    def __init__(self, config: dict,  image_size: int, num_stack_cells: int, in_channels: int, in_prev_channels: int, conv_channels: int,scheduled_droppath):
         super(NormalCellStack, self).__init__()
-        self.num_normal_cells = num_normal_cells
+        self.num_stack_cells = num_stack_cells
         self.image_size = image_size
         self.in_channels = in_channels
         self.in_prev_channels = in_prev_channels
         self.conv_channels = conv_channels
+        self.scheduled_droppath=scheduled_droppath
 
         self.cells = self._build_cells(config)
-        self.out_channels = self.cells[-1].out_channels
 
 
     def _build_cells(self, config):
@@ -74,13 +77,14 @@ class NormalCellStack(nn.Module):
         _prev_channels = self.in_prev_channels
 
         
-        for i in range(self.num_normal_cells):
+        for i in range(self.num_stack_cells):
             if i == 0:
                 cell = NormalCell(config,
                                   size=self.image_size,
                                   in_channels=_channels,
                                   in_prev_channels=_prev_channels,
                                   conv_channels=self.conv_channels,
+                                  scheduled_droppath=self.scheduled_droppath,
                                   first_cell_flag=True)
 
             else:
@@ -88,7 +92,8 @@ class NormalCellStack(nn.Module):
                                   size=self.image_size,
                                   in_channels=_channels,
                                   in_prev_channels=_prev_channels,
-                                  conv_channels=self.conv_channels)
+                                  conv_channels=self.conv_channels,
+                                  scheduled_droppath=self.scheduled_droppath)
             # print('in_c{},in_p_c{}'.format(_channels,_prev_channels))
             _prev_channels = _channels
             _channels = cell.out_channels
@@ -97,7 +102,7 @@ class NormalCellStack(nn.Module):
         return normal_cells
 
     def forward(self, x, x_prev):
-        for i in range(self.num_normal_cells):
+        for i in range(self.num_stack_cells):
             # print(self.cells[i])
             x_new = self.cells[i](x, x_prev)
             x_prev = x
@@ -107,7 +112,7 @@ class NormalCellStack(nn.Module):
 
 
 class NormalCell(nn.Module):
-    def __init__(self, config: dict, size: int, in_channels: int, in_prev_channels: int, conv_channels: int, first_cell_flag: bool = False):
+    def __init__(self, config: dict, size: int, in_channels: int, in_prev_channels: int, conv_channels: int, scheduled_droppath=None,first_cell_flag: bool = False,):
         super(NormalCell, self).__init__()
 
         self.in_channels = in_channels
@@ -141,6 +146,9 @@ class NormalCell(nn.Module):
                 conv, name = choose_conv_elem(
                     op, size, conv_channels, conv_channels)
                 srcnode="{}->{}->{}".format(srcnode_id, name,dstnode_id)
+                # add droppath
+                if scheduled_droppath is not None and scheduled_droppath.start_dropout_rate>0 and scheduled_droppath.stop_dropout_rate>0:
+                    conv=ScheduleDropPathWarp(conv,scheduled_droppath) 
                 self.convs[dstnode][srcnode] = conv
 
 
@@ -179,7 +187,7 @@ class ReduceCell(nn.Module):
         '''
             currently x_prev is dummy param
         '''
-        x_new = self.pool(x)
+        x_new = self.pool(x+x_prev)
 
         return x_new
 

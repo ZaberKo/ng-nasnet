@@ -9,6 +9,7 @@ import torchvision.transforms as transforms
 
 import random
 import numpy as np
+from utils import update_dropout_schedule
 
 from nasnet import NASNetCIFAR
 
@@ -18,15 +19,11 @@ import json
 from apex import amp
 
 
-def train(model, trainloader, testloader,optimizer, device):
-
-    
+def train(model, trainloader, testloader, optimizer, device):
     loss_func = torch.nn.CrossEntropyLoss()
-
-    
-
     running_loss = 0.0
     total_step = 0
+    torch.autograd.set_detect_anomaly(True)
     for epoch in range(train_config['epoch']):
         start_time = time.time()
         model.train()
@@ -38,7 +35,7 @@ def train(model, trainloader, testloader,optimizer, device):
             loss = loss_func(output, labels)
             optimizer.zero_grad()
             if train_config['fp16']:
-                with amp.scale_loss(loss,optimizer) as scaled_loss:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
             else:
                 loss.backward()
@@ -57,6 +54,8 @@ def train(model, trainloader, testloader,optimizer, device):
         print('epoch {} finished, cost {:.3f} sec'.format(
             epoch, time.time() - start_time))
         print('=======================\n\n\n')
+
+        update_dropout_schedule(model)
 
 
 def evaluate(model: torch.nn.Module, testloader, device):
@@ -98,12 +97,12 @@ def load_dataset(path: str, batch_size: int):
     trainset = datasets.CIFAR10(root=path, train=True,
                                 download=True, transform=transforms.Compose(transf+normalize))
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                              shuffle=True, num_workers=2)
+                                              shuffle=True, num_workers=2,pin_memory=True)
 
     testset = datasets.CIFAR10(root=path, train=False,
                                download=True, transform=transforms.Compose(normalize))
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                             shuffle=False, num_workers=2)
+                                             shuffle=False, num_workers=2,pin_memory=True)
 
     classes = ('plane', 'car', 'bird', 'cat',
                'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
@@ -135,28 +134,33 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_gpu = torch.cuda.device_count()
 
-    
+    steps = train_config['epoch']
 
     model = NASNetCIFAR(
-        cell_config_list,
-        nasnet_config['num_stem_channels'],
-        nasnet_config['cell_base_channels'],
-        nasnet_config['num_normal_cells'],
+        cell_config=cell_config_list,
+        stem_channels=nasnet_config['num_stem_channels'],
+        cell_base_channels=nasnet_config['cell_base_channels'],
+        num_stack_cells=nasnet_config['num_stack_cells'],
         image_size=32,
-        num_classes=10
+        num_classes=10,
+        start_dropblock_prob=train_config['start_dropblock_rate'],
+        end_dropblock_prob=train_config['end_dropblock_rate'],
+        start_droppath_prob=train_config['start_droppath_rate'],
+        end_droppath_prob=train_config['end_droppath_rate'],
+        dropfc_prob=train_config['dropfc_rate'],
+        steps=steps,
     )
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_config['lr'])
+    optimizer = torch.optim.Adam(model.parameters(), lr=train_config['lr'],weight_decay=0.0001)
 
     model.to(device)
     if train_config['fp16']:
-        model,optimizer=amp.initialize(model,optimizer,opt_level='O1')
+        model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
 
-   
     if n_gpu > 1:
         model = nn.DataParallel(model)
 
-    train(model, trainloader, testloader,optimizer, device)
+    train(model, trainloader, testloader, optimizer, device)
 
     # evaluate(model, testloader)
 
@@ -176,11 +180,20 @@ if __name__ == '__main__':
     train_config = config['train_config']
     nasnet_config = config['nasnet_config']
     normal_cell_config = {
-        2: [(0, 2)],
-        3: [(2, 4)],
-        4: [(3, 4)],
-        5: [(1, 6), (2, 6)],
-        6: [(0, 5)],
-        7: [(4, 1), (5, 1), (6, 1)]
+        2: [(0, 1), (1, 7)],
+        3: [(0, 4), (2, 7)],
+        4: [(2, 1), (3, 4)],
+        5: [(2, 1), (3, 7), (4, 7)],
+        6: [(0, 7), (3, 6), (4, 1)],
+        7: [(5, 1), (6, 1)]
     }
+
+    # normal_cell_config = {
+    #     2: [(0, 1), (1, 7)],
+    #     3: [(0, 4), (2, 7)],
+    #     4: [(2, 1), (3, 4)],
+    #     5: [(2, 1), (3, 7), (4, 7)],
+    #     6: [(0, 7), (3, 6), (4, 1)],
+    #     7: [(5, 1), (6, 1)]
+    # }
     main()

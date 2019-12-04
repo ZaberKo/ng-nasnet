@@ -1,5 +1,5 @@
 __pycache__/
 .vscode/
 /dataset/
-test*
-train.log
+test*.py
+*.log
