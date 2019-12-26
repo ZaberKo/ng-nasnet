@@ -1,113 +1,109 @@
 import time
 
-import torch.nn as nn
 import torch
+import torch.nn as nn
 import torch.optim
-from torch.utils.data.dataloader import DataLoader
-import torchvision.datasets as datasets
-import torchvision.transforms as transforms
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 
 import random
 import numpy as np
-from utils import update_dropout_schedule
+from utils import *
+from load_dataset import *
 
 from nasnet import NASNetCIFAR
+from label_smoothing import CrossEntropyLossMOD
+from lr_schedule import DampedCosineAnnealingWarmRestarts
 
 import argparse
 import json
 
 from apex import amp
+import apex.parallel
+
+import torch.backends.cudnn as cudnn
 
 
-def train(model, trainloader, testloader, optimizer, device):
-    loss_func = torch.nn.CrossEntropyLoss()
-    running_loss = 0.0
-    total_step = 0
-    torch.autograd.set_detect_anomaly(True)
-    for epoch in range(train_config['epoch']):
-        start_time = time.time()
-        model.train()
-
-        for step, data in enumerate(trainloader, 0):
-            data = tuple(t.to(device) for t in data)
-            images, labels = data
-            output = model(images)
-            loss = loss_func(output, labels)
-            optimizer.zero_grad()
-            if train_config['fp16']:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item()
-            total_step += 1
-            if step % 10 == 9:
-                print('epoch: {0}, iter:{1} loss:{2:.4f} avg_loss:{3:.4f}'.format(
-                    epoch, step, loss.item(), running_loss / total_step))
-
-        print('epoch{} test: '.format(epoch), end="")
-        evaluate(model, testloader, device)
-        # print('epoch{} train: '.format(epoch), end="")
-        # evaluate(model, trainloader)
-        print('epoch {} finished, cost {:.3f} sec'.format(
-            epoch, time.time() - start_time))
-        print('=======================\n\n\n')
-
-        update_dropout_schedule(model)
+def print_local(*text, **args):
+    if local_rank == 0:
+        print(*text, **args)
 
 
-def evaluate(model: torch.nn.Module, testloader, device):
-    correct = 0
-    total = 0
+def train(train_loader, model, criterion,  optimizer, epoch):
+    batch_time = AverageMeter()
+    losses = AverageMeter()
+    top1 = AverageMeter()
+    # torch.autograd.set_detect_anomaly(True)
+
+    model.train()
+
+    begin_time = time.time()
+
+    for step, data in enumerate(train_loader):
+
+        data = tuple(t.cuda() for t in data)
+        images, labels = data
+        output = model(images)
+        loss = criterion(output, labels)
+        optimizer.zero_grad()
+        with amp.scale_loss(loss, optimizer) as scaled_loss:
+            scaled_loss.backward()
+        optimizer.step()
+
+        prec1, = accuracy(output.detach(), labels, topk=(1,))
+
+        reduced_loss = reduce_tensor(loss.detach())
+        reduced_prec1 = reduce_tensor(prec1)
+
+        losses.update(reduced_loss.item(), images.shape[0])
+        top1.update(reduced_prec1.item(), images.shape[0])
+
+        torch.cuda.synchronize()
+
+        batch_time.update(time.time()-begin_time)
+
+        if step % 10 == 0:
+            print_local('Train: epoch:{:>4}: iter:{:>4} avg_batch_time: {:.3f} s loss:{:.4f} avg_loss:{:.4f} acc:{:.3f} avg_acc={:.3f} '.format(
+                epoch, step, batch_time.avg, losses.val, losses.avg, top1.val, top1.avg))
+
+        begin_time = time.time()
+
+    return top1
+
+
+def evaluate(val_loader, model, criterion, training=False):
+    batch_time = AverageMeter()
+    losses = AverageMeter()
+    top1 = AverageMeter()
+
     model.eval()
+
     with torch.no_grad():
-        for data in testloader:
-            data = tuple(t.to(device) for t in data)
+        begin_time = time.time()
+        for step, data in enumerate(val_loader):
+            data = tuple(t.cuda() for t in data)
             images, labels = data
 
             output = model(images)
-            _, predicted = torch.max(output.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+            loss = criterion(output, labels)
+            prec1, = accuracy(output.detach(), labels, topk=(1,))
 
-            # if total>100:
-            #     break
+            reduced_loss = reduce_tensor(loss.detach())
+            reduced_prec1 = reduce_tensor(prec1)
 
-    acc = correct / total * 100
-    print(
-        'Accuracy of the network on the 10000 test images: {:.3f}'.format(acc))
+            losses.update(reduced_loss.item(), images.shape[0])
+            top1.update(reduced_prec1.item(), images.shape[0])
 
-    return acc
+            batch_time.update(time.time()-begin_time)
 
+            begin_time = time.time()
 
-def load_dataset(path: str, batch_size: int):
-    mean = [0.49139968, 0.48215827, 0.44653124]
-    std = [0.24703233, 0.24348505, 0.26158768]
-    transf = [
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip()
-    ]
-    normalize = [
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std)
-    ]
+            if not training:
+                print_local('Val  : epoch:{:>4}: iter:{:>4} avg_batch_time: {:.3f} s loss:{:.4f} avg_loss:{:.4f} acc:{:.3f} avg_acc={:.3f}'.format(
+                    0, step, batch_time.avg, losses.val, losses.avg, top1.val, top1.avg))
 
-    trainset = datasets.CIFAR10(root=path, train=True,
-                                download=True, transform=transforms.Compose(transf+normalize))
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                              shuffle=True, num_workers=2,pin_memory=True)
-
-    testset = datasets.CIFAR10(root=path, train=False,
-                               download=True, transform=transforms.Compose(normalize))
-    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                             shuffle=False, num_workers=2,pin_memory=True)
-
-    classes = ('plane', 'car', 'bird', 'cat',
-               'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-
-    return trainloader, testloader, classes
+    return top1
 
 
 def save_model():
@@ -119,22 +115,29 @@ def load_model():
 
 
 def main():
-    random.seed(train_config['seed'])
-    np.random.seed(train_config['seed'])
-    torch.manual_seed(train_config['seed'])
-    torch.cuda.manual_seed_all(train_config['seed'])
+    seed = train_config['seed']+local_rank
+    random.seed(seed)
+    np.random.seed(seed)
 
-    batch_size = train_config['batch_size']
-
-    trainloader, testloader, classes = load_dataset(
-        train_config['data_path'], batch_size)
-
+    train_batch_size = train_config['train_batch_size']
+    val_batch_size = train_config['val_batch_size']
     cell_config_list = {'normal_cell': normal_cell_config}
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    cudnn.benchmark = True  # cudnn auto-tunner
+
+    device = torch.device('cuda', local_rank)
     n_gpu = torch.cuda.device_count()
 
-    steps = train_config['epoch']
+    torch.cuda.set_device(device)
+    torch.manual_seed(seed)
+
+    dist.init_process_group(backend='nccl')
+    assert torch.backends.cudnn.enabled, "Amp requires cudnn backend to be enabled."
+
+    if train_config['epoch'] <= train_config['dropout_schedule_steps']:
+        steps = train_config['epoch']
+    else:
+        steps = train_config['dropout_schedule_steps']
 
     model = NASNetCIFAR(
         cell_config=cell_config_list,
@@ -151,27 +154,106 @@ def main():
         steps=steps,
     )
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_config['lr'],weight_decay=0.0001)
+    model = apex.parallel.convert_syncbn_model(model)
+    model = model.cuda()
 
-    model.to(device)
-    if train_config['fp16']:
-        model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
+    # optimizer = torch.optim.AdamW(
+    #     model.parameters(),
+    #     lr=train_config['lr'],
+    #     betas=(0.5, 0.999),
+    #     weight_decay=1e-3
+    # )
 
-    if n_gpu > 1:
-        model = nn.DataParallel(model)
+    optimizer = torch.optim.SGD(
+        model.parameters(),
+        lr=train_config['lr'],
+        momentum=0.9,
+        weight_decay=1e-3,
+        nesterov=True
+    )
 
-    train(model, trainloader, testloader, optimizer, device)
+    model, optimizer = amp.initialize(model, optimizer,
+                                      opt_level='O1',
+                                      loss_scale=2**11
+                                      )
 
-    # evaluate(model, testloader)
+    model = DDP(model,device_ids=[local_rank],output_device=local_rank)
+
+    train_loader, val_loader, classes = load_dataset(
+        train_config['data_path'], train_batch_size, val_batch_size)
+
+    # schedule_lr = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    #     optimizer,
+    #     T_0=50,
+    #     T_mult=2,
+    #     eta_min=1e-3
+    # )
+
+    # schedule_lr = DampedCosineAnnealingWarmRestarts(
+    #     optimizer,
+    #     damping=0.5,
+    #     T_0=50,
+    #     T_mult=2,
+    #     eta_min=5e-4
+    # )
+
+    schedule_lr=torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        train_config['epoch']-train_config['start_lr_schedule_epoch'],
+        eta_min=1e-4
+    )
+    # schedule_lr=torch.optim.lr_scheduler.MultiStepLR(
+    #     optimizer,
+    #     [100,200,300],
+    #     gamma=0.5
+    # )
+
+    criterion = torch.nn.CrossEntropyLoss().cuda()
+    # criterion=CrossEntropyLossMOD(10).cuda()
+
+    for epoch in range(train_config['epoch']):
+        train_loader.sampler.set_epoch(epoch)
+
+        print_local('epoch {} start'.format(epoch))
+        print_local('current lr: {}'.format(schedule_lr.get_lr()[0]))
+
+        begin_time = time.time()
+
+        if epoch >= train_config['start_dropout_schedule_epoch']:
+            update_dropout_schedule(model)
+
+        prec1_train = train(train_loader, model, criterion,  optimizer, epoch)
+
+        prec1_val = evaluate(val_loader, model, criterion)
+
+        if epoch % 50 == 49:
+            prec1_train_val = evaluate(
+                train_loader, model, criterion, training=True)
+
+        if epoch >= train_config['start_lr_schedule_epoch']:
+            schedule_lr.step()
+
+        print_local('train acc: {:.3f}'.format(prec1_train.avg))
+        print_local('val acc: {:.3f}'.format(prec1_val.avg))
+
+        if epoch % 50 == 49:
+            print_local('val trainset acc: {:.3f}'.format(prec1_train_val.avg))
+
+        print_local('total time: {:.3f} s'.format(time.time()-begin_time))
+        print_local('\n\n')
 
 
 if __name__ == '__main__':
+    global local_rank, train_config, nasnet_config
     parser = argparse.ArgumentParser()
     parser.add_argument('--config_path', default='config.json',
                         type=str, help="config file path")
+    parser.add_argument("--local_rank", default=0, type=int)
     parser.add_argument('--do_train', action='store_true')
     parser.add_argument('--do_eval', action='store_true')
     args = parser.parse_args()
+
+    local_rank = args.local_rank
     config_path = args.config_path
 
     with open(config_path, mode='r', encoding='utf-8') as f:
@@ -179,21 +261,43 @@ if __name__ == '__main__':
 
     train_config = config['train_config']
     nasnet_config = config['nasnet_config']
-    normal_cell_config = {
-        2: [(0, 1), (1, 7)],
-        3: [(0, 4), (2, 7)],
-        4: [(2, 1), (3, 4)],
-        5: [(2, 1), (3, 7), (4, 7)],
-        6: [(0, 7), (3, 6), (4, 1)],
-        7: [(5, 1), (6, 1)]
-    }
-
     # normal_cell_config = {
     #     2: [(0, 1), (1, 7)],
-    #     3: [(0, 4), (2, 7)],
-    #     4: [(2, 1), (3, 4)],
-    #     5: [(2, 1), (3, 7), (4, 7)],
-    #     6: [(0, 7), (3, 6), (4, 1)],
-    #     7: [(5, 1), (6, 1)]
+    #     3: [(0, 3), (1, 1),(2, 1)],
+    #     4: [(0, 1), (1, 1), (2, 6)],
+    #     5: [(0, 7), (1, 1), (4, 7)],
+    #     6: [(0, 1), (1, 7)],
+    #     7: [(3, 1), (5, 1), (6, 1)]
     # }
+
+    # # nasnet-A
+    normal_cell_config = {
+        2: [(1, 7), (1, 7)],
+        3: [(0, 7), (1, 6)],
+        4: [(0, 1), (1, 2)],
+        5: [(0, 2), (1, 2)],
+        6: [(0, 7), (1, 7)],
+        7: [(2, 1), (3, 1), (4, 1), (5, 1), (6, 1)]
+    }
+
+    # resnet 3 conv
+    # normal_cell_config={
+    #     2:[(0,1),(1,1)],
+    #     3:[(2,7)],
+    #     4:[(1,1),(3,1)],
+    #     5:[(4,7)],
+    #     6:[(3,1),(5,1)],
+    #     7:[(6,7)]
+    # }
+
+    # # densenet 3 conv
+    # normal_cell_config={
+    #     2:[(0,1),(1,1)],
+    #     3:[(2,7)],
+    #     4:[(0,1),(1,1),(3,1)],
+    #     5:[(4,7)],
+    #     6:[(0,1),(1,1),(3,1),(5,1)],
+    #     7:[(6,7)]
+    # }
+
     main()

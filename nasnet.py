@@ -6,7 +6,7 @@ from cell_elem import *
 from utils import *
 from cell import *
 from dropblock import ScheduleDropBlock
-from droppath import ScheduleDropPath_
+from droppath import ScheduleDropPath
 '''
     cell config description
     0,1: input node
@@ -37,11 +37,13 @@ class NASNetCIFAR(nn.Module):
         normal_cell_config = cell_config['normal_cell']
         reduce_cell_config=None
 
-        _image_size = image_size
+        # self.scheduled_drop=ScheduleDropPath(start_droppath_prob,end_droppath_prob,steps)
+
+        _image_size = image_size # 32x32
         _channels=cell_base_channels
 
-        self.scheduled_droppath=ScheduleDropPath_(start_droppath_prob,end_droppath_prob,steps)
-
+       
+        self.dropblock0=ScheduleDropBlock(9,start_dropblock_prob,end_dropblock_prob,steps)
         self.cellstem=CellStem0(3,stem_channels)
         self.normal_layer0=FirstCellStack(
             config=normal_cell_config,
@@ -49,14 +51,17 @@ class NASNetCIFAR(nn.Module):
             num_stack_cells=num_stack_cells,
             in_channels=stem_channels,
             conv_channels=_channels,
-            scheduled_droppath=self.scheduled_droppath
+            scheduled_drop=self.dropblock0
         )
-        self.reduction_layer0 = ReduceCell()
-        self.dropblock0=ScheduleDropBlock(7,start_dropblock_prob,end_dropblock_prob,steps)
+        self.reduction_layer0 = ReduceCell(_image_size,_image_size//2,self.normal_layer0.out_channels)
+        # self.reduction_layer0=ReduceCell_Old()
         
-        _image_size//=2
+        
+        _image_size//=2 # 16x16
         _channels*=2
-        out_channels0,_=get_stack_out_channels(self.normal_layer0)
+        out_channels0=self.normal_layer0.out_channels
+
+        self.dropblock1=ScheduleDropBlock(7,start_dropblock_prob,end_dropblock_prob,steps)
         self.normal_layer1 = NormalCellStack(
             config=normal_cell_config,
             image_size=_image_size,
@@ -64,14 +69,16 @@ class NASNetCIFAR(nn.Module):
             in_channels=out_channels0,
             in_prev_channels=out_channels0,
             conv_channels=_channels,
-            scheduled_droppath=self.scheduled_droppath
+            scheduled_drop=self.dropblock1
             )
-        self.reduction_layer1 = ReduceCell()
-        self.dropblock1=ScheduleDropBlock(5,start_dropblock_prob,end_dropblock_prob,steps)
+        self.reduction_layer1 = ReduceCell(_image_size,_image_size//2,self.normal_layer1.out_channels)
+        # self.reduction_layer1=ReduceCell_Old()
         
-        _image_size //= 2
+        
+        _image_size //= 2 # 8x8
         _channels*=2
-        out_channels1,_=get_stack_out_channels(self.normal_layer1)
+        out_channels1=self.normal_layer1.out_channels
+        self.dropblock2=ScheduleDropBlock(5,start_dropblock_prob,end_dropblock_prob,steps)
         self.normal_layer2 = NormalCellStack(
             config=normal_cell_config,
             image_size=_image_size,
@@ -79,12 +86,12 @@ class NASNetCIFAR(nn.Module):
             in_channels=out_channels1,
             in_prev_channels=out_channels1,
             conv_channels=_channels,
-            scheduled_droppath=self.scheduled_droppath
+            scheduled_drop=self.dropblock2
             )
-        self.reduction_layer2 = ReduceCell()
+
         _image_size //= 2
 
-        out_channels2,_=get_stack_out_channels(self.normal_layer2)
+        out_channels2=self.normal_layer2.out_channels
         self.gap_layer = nn.AdaptiveAvgPool2d(1)
 
         # self.softmax_layer = nn.Sequential(OrderedDict([
@@ -108,13 +115,13 @@ class NASNetCIFAR(nn.Module):
         x_new=self.reduction_layer0(x,x_p)
         x,x_p=x_new,x
 
-        x=self.dropblock0(x)
+        x=self.dropblock1(x)
 
         x,x_p=self.normal_layer1(x,x_p)
         x_new=self.reduction_layer1(x,x_p)
         x,x_p=x_new,x
 
-        x=self.dropblock1(x)
+        x=self.dropblock2(x)
 
         x,x_p=self.normal_layer2(x,x_p)
 

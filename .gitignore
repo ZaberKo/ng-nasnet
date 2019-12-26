@@ -3,3 +3,6 @@ __pycache__/
 /dataset/
 test*.py
 *.log
+/log/
+main_amp.py
+train_ddp2.sh
