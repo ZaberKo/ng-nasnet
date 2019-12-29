@@ -161,7 +161,7 @@ def main():
     #     model.parameters(),
     #     lr=train_config['lr'],
     #     betas=(0.5, 0.999),
-    #     weight_decay=1e-3
+    #     weight_decay=1e-4
     # )
 
     optimizer = torch.optim.SGD(
@@ -184,9 +184,9 @@ def main():
 
     # schedule_lr = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
     #     optimizer,
-    #     T_0=50,
+    #     T_0=100,
     #     T_mult=2,
-    #     eta_min=1e-3
+    #     eta_min=1e-4
     # )
 
     # schedule_lr = DampedCosineAnnealingWarmRestarts(
@@ -197,10 +197,16 @@ def main():
     #     eta_min=5e-4
     # )
 
+    # schedule_lr=torch.optim.lr_scheduler.CosineAnnealingLR(
+    #     optimizer,
+    #     train_config['epoch']-train_config['start_lr_schedule_epoch'],
+    #     eta_min=1e-4
+    # )
+
     schedule_lr=torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        train_config['epoch']-train_config['start_lr_schedule_epoch'],
-        eta_min=1e-4
+        150,
+        eta_min=1e-3
     )
     # schedule_lr=torch.optim.lr_scheduler.MultiStepLR(
     #     optimizer,
