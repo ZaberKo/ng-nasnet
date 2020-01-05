@@ -182,12 +182,12 @@ def main():
     train_loader, val_loader, classes = load_dataset(
         train_config['data_path'], train_batch_size, val_batch_size)
 
-    # schedule_lr = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-    #     optimizer,
-    #     T_0=100,
-    #     T_mult=2,
-    #     eta_min=1e-4
-    # )
+    schedule_lr = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0=50,
+        T_mult=2,
+        eta_min=5e-4
+    )
 
     # schedule_lr = DampedCosineAnnealingWarmRestarts(
     #     optimizer,
@@ -200,14 +200,14 @@ def main():
     # schedule_lr=torch.optim.lr_scheduler.CosineAnnealingLR(
     #     optimizer,
     #     train_config['epoch']-train_config['start_lr_schedule_epoch'],
-    #     eta_min=1e-4
+    #     eta_min=1e-3
     # )
 
-    schedule_lr=torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        150,
-        eta_min=1e-3
-    )
+    # schedule_lr=torch.optim.lr_scheduler.CosineAnnealingLR(
+    #     optimizer,
+    #     150,
+    #     eta_min=1e-3
+    # )
     # schedule_lr=torch.optim.lr_scheduler.MultiStepLR(
     #     optimizer,
     #     [100,200,300],
@@ -267,6 +267,8 @@ if __name__ == '__main__':
 
     train_config = config['train_config']
     nasnet_config = config['nasnet_config']
+
+    # top1
     # normal_cell_config = {
     #     2: [(0, 1), (1, 7)],
     #     3: [(0, 3), (1, 1),(2, 1)],
@@ -275,16 +277,45 @@ if __name__ == '__main__':
     #     6: [(0, 1), (1, 7)],
     #     7: [(3, 1), (5, 1), (6, 1)]
     # }
+    # top2
+    # normal_cell_config = {
+    #     2: [(0, 1), (1, 7)],
+    #     3: [(0, 4), (1, 1), (2, 6)],
+    #     4: [(0, 7), (1, 3)],
+    #     5: [(0, 5), (1, 7), (4, 6)],
+    #     6: [(0, 7), (1, 1), (2, 1), (3, 7)],
+    #     7: [(5, 1), (6, 1)]
+    # }
+
+    # # top3
+    # normal_cell_config = {
+    #     2: [(0, 1)],
+    #     3: [(0, 3), (1, 1)],
+    #     4: [(1, 6), (2, 4)],
+    #     5: [(0, 5), (1, 1), (2, 7), (4, 7)],
+    #     6: [(0, 7),  (3, 6), ],
+    #     7: [(5, 1), (6, 1)]
+    # }
+
+    # # top4
+    normal_cell_config = {
+        2: [(0, 1)],
+        3: [(0, 5), (1, 5), (2, 1)],
+        4: [(0, 4), (1, 6)],
+        5: [(0, 3), (1, 7)],
+        6: [(0, 7), (1, 1), (2, 2)],
+        7: [(3, 1), (4, 1), (5, 1), (6, 1)]
+    }
 
     # # nasnet-A
-    normal_cell_config = {
-        2: [(1, 7), (1, 7)],
-        3: [(0, 7), (1, 6)],
-        4: [(0, 1), (1, 2)],
-        5: [(0, 2), (1, 2)],
-        6: [(0, 7), (1, 7)],
-        7: [(2, 1), (3, 1), (4, 1), (5, 1), (6, 1)]
-    }
+    # normal_cell_config = {
+    #     2: [(1, 7), (1, 7)],
+    #     3: [(0, 7), (1, 6)],
+    #     4: [(0, 1), (1, 2)],
+    #     5: [(0, 2), (1, 2)],
+    #     6: [(0, 7), (1, 7)],
+    #     7: [(2, 1), (3, 1), (4, 1), (5, 1), (6, 1)]
+    # }
 
     # resnet 3 conv
     # normal_cell_config={
