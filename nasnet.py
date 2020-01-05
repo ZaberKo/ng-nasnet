@@ -46,7 +46,7 @@ class NASNetCIFAR(nn.Module):
         self.dropblock0=ScheduleDropBlock(9,start_dropblock_prob,end_dropblock_prob,steps)
         self.droppath=ScheduleDropPath(start_droppath_prob,end_droppath_prob,steps)
 
-        use_droppath_flag= start_dropblock_prob!=0 and end_dropblock_prob!=0
+        use_droppath_flag= start_droppath_prob!=0 and end_droppath_prob!=0
         self.cellstem=CellStem0(3,stem_channels)
         self.normal_layer0=FirstCellStack(
             config=normal_cell_config,
