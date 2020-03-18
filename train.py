@@ -115,7 +115,8 @@ def load_model():
 
 
 def main():
-    seed = train_config['seed']+local_rank
+    # note: use same seed to keep the initial model is same
+    seed = train_config['seed']
     random.seed(seed)
     np.random.seed(seed)
 
@@ -269,14 +270,14 @@ if __name__ == '__main__':
     nasnet_config = config['nasnet_config']
 
     # top1
-    # normal_cell_config = {
-    #     2: [(0, 1), (1, 7)],
-    #     3: [(0, 3), (1, 1),(2, 1)],
-    #     4: [(0, 1), (1, 1), (2, 6)],
-    #     5: [(0, 7), (1, 1), (4, 7)],
-    #     6: [(0, 1), (1, 7)],
-    #     7: [(3, 1), (5, 1), (6, 1)]
-    # }
+    normal_cell_config = {
+        2: [(0, 1), (1, 7)],
+        3: [(0, 3), (1, 1),(2, 1)],
+        4: [(0, 1), (1, 1), (2, 6)],
+        5: [(0, 7), (1, 1), (4, 7)],
+        6: [(0, 1), (1, 7)],
+        7: [(3, 1), (5, 1), (6, 1)]
+    }
     # top2
     # normal_cell_config = {
     #     2: [(0, 1), (1, 7)],
@@ -298,14 +299,14 @@ if __name__ == '__main__':
     # }
 
     # # top4
-    normal_cell_config = {
-        2: [(0, 1)],
-        3: [(0, 5), (1, 5), (2, 1)],
-        4: [(0, 4), (1, 6)],
-        5: [(0, 3), (1, 7)],
-        6: [(0, 7), (1, 1), (2, 2)],
-        7: [(3, 1), (4, 1), (5, 1), (6, 1)]
-    }
+    # normal_cell_config = {
+    #     2: [(0, 1)],
+    #     3: [(0, 5), (1, 5), (2, 1)],
+    #     4: [(0, 4), (1, 6)],
+    #     5: [(0, 3), (1, 7)],
+    #     6: [(0, 7), (1, 1), (2, 2)],
+    #     7: [(3, 1), (4, 1), (5, 1), (6, 1)]
+    # }
 
     # # nasnet-A
     # normal_cell_config = {
